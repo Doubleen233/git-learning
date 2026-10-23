@@ -1,0 +1,44 @@
+name: Compile Trigger
+
+# 学员在 PR 评论区回复包含 compile 的评论时，给 PR 打上 compile 标签。
+# CI 工作流监听 labeled 事件，从而在 PR 上产生真正的检查项（分支保护才能识别）。
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  label:
+    name: 打 compile 标签
+    if: >-
+      github.event.issue.pull_request != null &&
+      contains(github.event.comment.body, 'compile')
+    runs-on: ubuntu-latest
+    steps:
+      - name: 确保标签存在并重新打上
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const issue_number = context.issue.number;
+
+            // 标签不存在则创建（已存在会报 422，忽略）
+            try {
+              await github.rest.issues.createLabel({
+                owner, repo,
+                name: 'compile',
+                color: '0e8a16',
+                description: '评论 compile 后自动打上，用于触发 CI'
+              });
+            } catch (e) { /* 已存在 */ }
+
+            // 先移除再添加：保证每次评论都会重新触发 labeled 事件
+            try {
+              await github.rest.issues.removeLabel({ owner, repo, issue_number, name: 'compile' });
+            } catch (e) { /* 本来就没有 */ }
+
+            await github.rest.issues.addLabels({ owner, repo, issue_number, labels: ['compile'] });
