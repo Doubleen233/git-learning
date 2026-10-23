@@ -1,36 +1,30 @@
 name: CI
 
-# 触发方式：不随 push / 发 PR 自动运行。
-# 在 PR 评论区回复一条包含 compile 的评论才会触发；
-# 结果会以检查项（Checks）的形式出现在 PR 页面。
-#
-# 说明：issue_comment 触发的 workflow 取自默认分支（main）上的本文件，
-# 因此修改本文件后需要先合入 main 才会生效。
+# 由 compile 标签触发（学员在 PR 评论 compile → compile-trigger.yml 自动打标签）。
+# 必须用 pull_request 事件：GitHub 只承认 push / pull_request / pull_request_target
+# 触发的检查项作为分支保护的"必需检查"，issue_comment 触发的检查不算。
 on:
-  issue_comment:
-    types: [created]
+  pull_request:
+    types: [labeled]
 
-# 只读权限即可：不需要发评论，检查状态由 Actions 自动挂到 PR 上。
-# 绝对不要在跑学员代码的流程里引入任何 secrets。
+# 只读权限：跑的是 PR 代码，绝不能给写权限或 secrets。
 permissions:
   contents: read
 
 jobs:
   build-and-test:
     name: 编译与测试
-    if: >-
-      github.event.issue.pull_request != null &&
-      contains(github.event.comment.body, 'compile')
+    if: github.event.label.name == 'compile'
     runs-on: ubuntu-latest
     steps:
       - name: 检出 PR 代码
         uses: actions/checkout@v4
         with:
-          ref: refs/pull/${{ github.event.issue.number }}/head
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: 打印检出版本（诊断用，稳定后可删）
         run: |
-          echo "PR #${{ github.event.issue.number }}"
+          echo "PR #${{ github.event.pull_request.number }}"
           git log -1 --oneline
           ls -1 submit/ || true
 
@@ -42,30 +36,26 @@ jobs:
 
   check-docs:
     name: 检查文档规范
-    if: >-
-      github.event.issue.pull_request != null &&
-      contains(github.event.comment.body, 'compile')
+    if: github.event.label.name == 'compile'
     runs-on: ubuntu-latest
     steps:
       - name: 检出 PR 代码
         uses: actions/checkout@v4
         with:
-          ref: refs/pull/${{ github.event.issue.number }}/head
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: 检查 submit 下的作业文档
         run: bash scripts/check_readme.sh
 
   check-submit:
     name: 检查提交规范
-    if: >-
-      github.event.issue.pull_request != null &&
-      contains(github.event.comment.body, 'compile')
+    if: github.event.label.name == 'compile'
     runs-on: ubuntu-latest
     steps:
       - name: 检出 PR 代码
         uses: actions/checkout@v4
         with:
-          ref: refs/pull/${{ github.event.issue.number }}/head
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: 检查目录命名
         run: bash scripts/check_submit.sh
