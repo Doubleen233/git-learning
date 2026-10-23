@@ -27,6 +27,12 @@
 现在的做法用 **Statuses API** 直接往 PR 的 head commit 上报状态，
 这是分支保护认可的（commit status 与 check run 同等对待）。
 
+### 为什么 PR 的 "Checks" 标签页是 0
+
+- 结果以 **commit status** 形式上报 → 显示在 PR 底部的 "All checks have passed (3 successful checks)"；
+- "Checks" 标签页只统计 **check run**（Actions 任务自带的），所以显示 0；
+- 分支保护的必需检查同样认可 commit status，合并门禁不受影响。
+
 ## 开课前需要做的事
 
 1. **确认 Actions 可用**：Settings → Actions → General，允许 Actions 运行。

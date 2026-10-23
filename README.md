@@ -156,6 +156,12 @@ compile
 
 PR 页面下方的检查项（Checks），或仓库顶部的 **Actions** 标签页。点进任务可以看完整日志。
 
+**Q：为什么 "Checks" 标签页显示 0，但下方显示 "All checks have passed"？**
+
+因为检查结果是以 **commit status**（提交状态）上报的，而不是 Actions 的 check run。
+PR 的 "Checks" 标签页只列出 check run；合并框会同时统计两者，所以显示 3 个通过。
+这是刻意设计：`issue_comment` 触发的流水线，其 check run 不被分支保护认可，只有 commit status 可以。
+
 **Q：评论了 `compile` 但检查没出现？**
 
 按顺序检查：① 评论是否发在 **PR** 上（Issue 评论不算）；② 内容是否包含 `compile`；
