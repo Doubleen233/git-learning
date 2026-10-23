@@ -1,64 +1,76 @@
 # 维护者说明（GitHub 版）
 
-这是 GitCode 版的 GitHub 移植版本：检查脚本完全复用，CI 改成了 GitHub Actions。
+这是 GitCode 版的 GitHub 移植版本：检查脚本完全复用，CI 换成 GitHub Actions。
 
-## 这套机制是怎么工作的（两个 workflow）
+## 这套机制是怎么工作的
 
-| 文件 | 触发 | 做什么 |
-| --- | --- | --- |
-| `.github/workflows/compile-trigger.yml` | `issue_comment` | 评论在 PR 上且内容含 `compile` → 给 PR 打上 `compile` 标签（先移除再添加，保证每次评论都能重新触发） |
-| `.github/workflows/ci.yml` | `pull_request: labeled`（且标签是 `compile`） | 三个并行任务：编译与测试 / 检查文档规范 / 检查提交规范，检出 PR 的 head commit |
+一个 workflow（`.github/workflows/ci.yml`），触发条件是 **PR 评论里出现 `compile`**：
 
-**为什么拆成两个**：GitHub 官方规定，只有 `push`、`pull_request`、`pull_request_target`
-触发的检查项才能作为分支保护的"必需检查"；`issue_comment` 触发的检查既不会显示在 PR 上，
-也不能满足门禁。所以必须"评论 → 打标签 → 标签触发 PR 检查"。
+```
+评论 compile
+  └─ 读取 PR 的 head SHA（gh api）
+       └─ checkout 这个 SHA（保证跑的是 PR 代码）
+            └─ 三个并行 job 跑脚本
+                 └─ 用 Statuses API 把结果写回 PR head commit
+                      └─ 分支保护据此判断能否合并
+```
+
+### 为什么不用"打标签再触发"
+
+两个坑叠在一起，导致标签方案行不通：
+
+1. **`issue_comment` 触发的检查不被分支保护认可**：GitHub 官方规定，只有
+   `push` / `pull_request` / `pull_request_target` 触发的检查才能作为"必需检查"。
+2. **`GITHUB_TOKEN` 产生的事件不会触发新 workflow**（防止递归）。
+   所以"评论 → 用 token 打标签 → 标签触发 CI"这一步永远不会发生。
+
+现在的做法用 **Statuses API** 直接往 PR 的 head commit 上报状态，
+这是分支保护认可的（commit status 与 check run 同等对待）。
 
 ## 开课前需要做的事
 
-1. **确认 Actions 可用**：Settings → Actions → General，允许 Actions 运行（公开仓库默认开启）。
-2. **先跑一次，让检查出现在分支保护列表里**：
+1. **确认 Actions 可用**：Settings → Actions → General，允许 Actions 运行。
+2. **先跑一次，让状态出现在分支保护列表里**：
    - 开一个测试 PR（任意小改动）；
    - 在 PR 评论区回复 `compile`；
-   - 等 Actions 里两条运行完成：`Compile Trigger`（打标签）→ `CI`（三个检查）。
-   > GitHub 的分支保护页面只列出**最近一周内实际运行过**的检查项，没跑过就是空的。
+   - 等 Actions 里的 **CI** 运行完成，三个 job 都会上报状态。
+   > 分支保护页面只列出最近一周内**上报过**的检查名，没跑过就是空的。
 3. **给 main 开分支保护**：Settings → Branches → Add branch protection rule：
    - Branch name pattern：`main`
-   - ✅ Require a pull request before merging（1 approval）
+   - ✅ Require a pull request before merging
    - ✅ Require status checks to pass before merging → 搜索并选中
      `编译与测试`、`检查文档规范`、`检查提交规范`
    - 建议 ✅ Do not allow bypassing the above settings
-4. **再验证一次**：新建 PR，不评论 → 合并按钮不可用；评论 `compile` → 三个检查通过 → 可合并。
+4. **验证**：新建 PR，不评论 → 合并按钮不可用；评论 `compile` → 三个状态变绿 → 可合并。
 
 > **单人仓库的限制**：GitHub 不允许自己批准自己的 PR（GitCode 也要求审查人和评审人不同）。
 > 学员的 PR 不受影响（作者是学员，批准的是助教）；但**维护者自己的 PR** 会卡住。
 > 处理办法二选一：
 > 1. 加一个助教账号作为协作者，日常由它批维护类 PR（推荐，长期方案）；
 > 2. 维护类 PR 临时把 `Require approvals` 调成 0，合并完再改回来。
->
-> 这也意味着：本仓库第一次合并 CI 配置时，需要先临时关掉审批要求（或让第二个账号批准）。
 
-> 注意：`compile-trigger.yml` 由 `issue_comment` 触发，使用的永远是**默认分支 main 上的版本**，
-> 所以修改它必须先合入 main 才生效。
+> 注意：`issue_comment` 触发的工作流永远使用**默认分支 main 上的版本**，
+> 所以修改 `ci.yml` 必须先合入 main 才生效。
 
 ## 常见问题排查
 
 | 现象 | 原因 / 处理 |
 | --- | --- |
-| 评论 `compile` 后什么都没发生 | 评论是否在 **PR** 上；内容是否含 `compile`；`compile-trigger.yml` 是否已在 main 上 |
-| 有 `Compile Trigger` 运行但没有 `CI` 运行 | 标签没打上：看 `Compile Trigger` 日志；确认 workflow 有 `issues: write` 权限；PR 右上角是否有 `compile` 标签 |
-| 有 `CI` 运行但 job 全 skipped | `labeled` 事件的标签名不是 `compile`（比如手动加了别的标签） |
-| 检查出现在旧 commit 上 | 正常：push 新提交后旧检查不满足"最新 commit"要求，**再评论一次 `compile`** 即可重新触发 |
+| 评论 `compile` 后没有运行 | 评论是否在 **PR** 上；内容是否含 `compile`；`ci.yml` 是否已在 main 上 |
+| 有运行，但 PR 上没有状态 | 看"上报检查状态"步骤的日志：多为 `statuses: write` 权限或 `gh api` 报错 |
+| 状态挂在旧 commit 上 | 正常：push 新提交后旧状态不满足"最新 commit"要求，**再评论一次 `compile`** |
 | 分支保护页面搜不到检查 | 还没跑过；先按"开课前第 2 步"跑一次 |
-| 合并按钮一直灰 | 检查未全绿，或没有 approval |
+| 合并按钮一直灰 | 状态未全绿，或没有 approval |
+| `gh api` 报 404 | PR 不是从本仓库分支开的（极少见）；检查 `pulls/<编号>` 是否存在 |
 
 ## 安全注意
 
-- `ci.yml` 使用 **只读 Token**（`contents: read`），没有任何 secrets —— 跑的是学员代码，必须保持这样。
-- `pull_request` 事件执行的是 **PR 分支里的 workflow 文件**，理论上学员可以改它。防线：
-  - 分支保护要求这三个检查名，删掉 workflow 会导致检查永不出现 → 合不进去；
-  - 把 job 改成"假通过"是可能的，所以 **Review 时留意 diff 里有没有动 `.github/`**；
-  - 需要更强保证时可改用 `pull_request_target`（从 main 取 workflow 文件），但必须保持只读权限、不注入 secrets。
+- `ci.yml` 权限固定为 `contents: read` + `pull-requests: read` + `statuses: write`；
+  **没有任何 secrets**，跑的是学员代码，必须保持这样。
+- checkout 时设置了 `persist-credentials: false`，避免学员代码从 `.git/config` 读到 token。
 - 学员 Fork 的 PR 也能触发（任何人的评论都可以），这正是"自助验收"的设计。
+- 如果担心滥用，可以在 `if` 里加评论者权限判断，例如：
+  `github.event.comment.author_association == 'OWNER' || github.event.comment.author_association == 'MEMBER'`。
 
 ## 额度
 
@@ -84,6 +96,6 @@ Fork 仓库
                                 └─ git push origin homework/英文名
                                      └─ 发 PR 到上游 main
                                           └─ PR 评论区回复 compile
-                                               └─ 自动打 compile 标签 → CI 三个检查
+                                               └─ Actions 跑检查并上报状态
                                                     └─ Review → 合并
 ```

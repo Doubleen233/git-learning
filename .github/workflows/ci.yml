@@ -1,61 +1,140 @@
 name: CI
 
-# 由 compile 标签触发（学员在 PR 评论 compile → compile-trigger.yml 自动打标签）。
-# 必须用 pull_request 事件：GitHub 只承认 push / pull_request / pull_request_target
-# 触发的检查项作为分支保护的"必需检查"，issue_comment 触发的检查不算。
+# 学员在 PR 评论区回复 compile 触发。
+#
+# 为什么用 Statuses API 上报结果：
+# GitHub 只承认 push / pull_request / pull_request_target 触发的检查作为分支保护的
+# "必需检查"；issue_comment 触发的检查不会出现在 PR 上，也无法满足门禁。
+# 所以流程是：评论触发 → 检出 PR 代码跑脚本 → 用 Statuses API 把结果写回 PR head commit。
+# 分支保护里要求的检查名，就是下面三个 job 的 name。
 on:
-  pull_request:
-    types: [labeled]
+  issue_comment:
+    types: [created]
 
-# 只读权限：跑的是 PR 代码，绝不能给写权限或 secrets。
 permissions:
   contents: read
+  pull-requests: read
+  statuses: write
 
 jobs:
   build-and-test:
     name: 编译与测试
-    if: github.event.label.name == 'compile'
+    if: >-
+      github.event.issue.pull_request != null &&
+      contains(github.event.comment.body, 'compile')
     runs-on: ubuntu-latest
     steps:
+      - name: 获取 PR head SHA
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          sha=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.issue.number }}" --jq .head.sha)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "PR head: $sha"
+
       - name: 检出 PR 代码
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ steps.pr.outputs.sha }}
+          persist-credentials: false
 
       - name: 打印检出版本（诊断用，稳定后可删）
         run: |
-          echo "PR #${{ github.event.pull_request.number }}"
           git log -1 --oneline
           ls -1 submit/ || true
 
-      - name: 确认编译器可用
-        run: g++ --version
-
-      - name: 编译并测试 submit 下的代码
+      - name: 编译并测试
+        id: check
         run: bash scripts/run_tests.sh
+
+      - name: 上报检查状态
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ steps.check.outcome }}" = "success" ]; then
+            state=success; desc="通过"
+          else
+            state=failure; desc="失败，请查看 Actions 日志"
+          fi
+          gh api -X POST "repos/${{ github.repository }}/statuses/${{ steps.pr.outputs.sha }}" \
+            -f state="$state" -f context="编译与测试" -f description="$desc" > /dev/null
 
   check-docs:
     name: 检查文档规范
-    if: github.event.label.name == 'compile'
+    if: >-
+      github.event.issue.pull_request != null &&
+      contains(github.event.comment.body, 'compile')
     runs-on: ubuntu-latest
     steps:
+      - name: 获取 PR head SHA
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          sha=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.issue.number }}" --jq .head.sha)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "PR head: $sha"
+
       - name: 检出 PR 代码
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ steps.pr.outputs.sha }}
+          persist-credentials: false
 
       - name: 检查 submit 下的作业文档
+        id: check
         run: bash scripts/check_readme.sh
+
+      - name: 上报检查状态
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ steps.check.outcome }}" = "success" ]; then
+            state=success; desc="通过"
+          else
+            state=failure; desc="失败，请查看 Actions 日志"
+          fi
+          gh api -X POST "repos/${{ github.repository }}/statuses/${{ steps.pr.outputs.sha }}" \
+            -f state="$state" -f context="检查文档规范" -f description="$desc" > /dev/null
 
   check-submit:
     name: 检查提交规范
-    if: github.event.label.name == 'compile'
+    if: >-
+      github.event.issue.pull_request != null &&
+      contains(github.event.comment.body, 'compile')
     runs-on: ubuntu-latest
     steps:
+      - name: 获取 PR head SHA
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          sha=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.issue.number }}" --jq .head.sha)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "PR head: $sha"
+
       - name: 检出 PR 代码
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ steps.pr.outputs.sha }}
+          persist-credentials: false
 
       - name: 检查目录命名
+        id: check
         run: bash scripts/check_submit.sh
+
+      - name: 上报检查状态
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ steps.check.outcome }}" = "success" ]; then
+            state=success; desc="通过"
+          else
+            state=failure; desc="失败，请查看 Actions 日志"
+          fi
+          gh api -X POST "repos/${{ github.repository }}/statuses/${{ steps.pr.outputs.sha }}" \
+            -f state="$state" -f context="检查提交规范" -f description="$desc" > /dev/null
