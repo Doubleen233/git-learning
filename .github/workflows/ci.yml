@@ -1,0 +1,71 @@
+name: CI
+
+# 触发方式：不随 push / 发 PR 自动运行。
+# 在 PR 评论区回复一条包含 compile 的评论才会触发；
+# 结果会以检查项（Checks）的形式出现在 PR 页面。
+#
+# 说明：issue_comment 触发的 workflow 取自默认分支（main）上的本文件，
+# 因此修改本文件后需要先合入 main 才会生效。
+on:
+  issue_comment:
+    types: [created]
+
+# 只读权限即可：不需要发评论，检查状态由 Actions 自动挂到 PR 上。
+# 绝对不要在跑学员代码的流程里引入任何 secrets。
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: 编译与测试
+    if: >-
+      github.event.issue.pull_request != null &&
+      contains(github.event.comment.body, 'compile')
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出 PR 代码
+        uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ github.event.issue.number }}/head
+
+      - name: 打印检出版本（诊断用，稳定后可删）
+        run: |
+          echo "PR #${{ github.event.issue.number }}"
+          git log -1 --oneline
+          ls -1 submit/ || true
+
+      - name: 确认编译器可用
+        run: g++ --version
+
+      - name: 编译并测试 submit 下的代码
+        run: bash scripts/run_tests.sh
+
+  check-docs:
+    name: 检查文档规范
+    if: >-
+      github.event.issue.pull_request != null &&
+      contains(github.event.comment.body, 'compile')
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出 PR 代码
+        uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ github.event.issue.number }}/head
+
+      - name: 检查 submit 下的作业文档
+        run: bash scripts/check_readme.sh
+
+  check-submit:
+    name: 检查提交规范
+    if: >-
+      github.event.issue.pull_request != null &&
+      contains(github.event.comment.body, 'compile')
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出 PR 代码
+        uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ github.event.issue.number }}/head
+
+      - name: 检查目录命名
+        run: bash scripts/check_submit.sh
